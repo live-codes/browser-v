@@ -1,0 +1,11 @@
+{
+  "name": "browser-v",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "description": "Proof of concept: compile and run V (vlang) in the browser, no server",
+  "scripts": {
+    "start": "node serve.mjs"
+  }
+}

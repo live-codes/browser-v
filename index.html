@@ -1,0 +1,493 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>V in the browser — LiveCodes PoC</title>
+    <style>
+      :root {
+        --bg: #fafafa;
+        --fg: #24292f;
+        --muted: #6a737d;
+        --border: #d0d7de;
+        --accent: #0969da;
+        --panel: #ffffff;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        line-height: 1.5;
+      }
+      header {
+        padding: 1.25rem 1.5rem 0.5rem;
+      }
+      header h1 {
+        margin: 0;
+        font-size: 1.15rem;
+      }
+      header p {
+        margin: 0.25rem 0 0;
+        color: var(--muted);
+        font-size: 0.85rem;
+      }
+      main {
+        padding: 0.75rem 1.5rem 2rem;
+        max-width: 1100px;
+      }
+      .toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.6rem;
+        margin-bottom: 0.6rem;
+      }
+      button,
+      select {
+        font: inherit;
+        font-size: 0.85rem;
+        padding: 0.35rem 0.7rem;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--panel);
+        color: inherit;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      button#run:not(:disabled) {
+        border-color: var(--accent);
+        color: var(--accent);
+        font-weight: 600;
+      }
+      #status {
+        margin-left: auto;
+        font-size: 0.8rem;
+        color: var(--muted);
+      }
+      #status.error {
+        color: #cf222e;
+      }
+      textarea,
+      pre {
+        width: 100%;
+        margin: 0;
+        font-family: ui-monospace, "SFMono-Regular", "Source Code Pro", Menlo, Consolas, monospace;
+        font-size: 0.85rem;
+        line-height: 1.55;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--panel);
+        padding: 0.75rem 0.9rem;
+        resize: vertical;
+      }
+      textarea {
+        min-height: 15rem;
+        tab-size: 3;
+        white-space: pre;
+        overflow-wrap: normal;
+        overflow-x: auto;
+      }
+      textarea:focus {
+        outline: 2px solid var(--accent);
+        outline-offset: -1px;
+      }
+      pre {
+        min-height: 8rem;
+        margin-top: 0.75rem;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+      pre:empty::before {
+        content: "Output appears here.";
+        color: var(--muted);
+      }
+      .hint {
+        margin-top: 0.4rem;
+        font-size: 0.75rem;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>V in the browser</h1>
+      <p>
+        The V compiler, compiled to WebAssembly, runs entirely on this page. Nothing is sent to a
+        server.
+      </p>
+    </header>
+
+    <main>
+      <div class="toolbar">
+        <label>
+          <select id="samples" aria-label="Sample program"></select>
+        </label>
+        <button id="run" disabled>Run</button>
+        <button id="stop" disabled>Stop</button>
+        <span id="status">Loading V compiler…</span>
+      </div>
+
+      <textarea id="editor" spellcheck="false" wrap="off"></textarea>
+      <div class="hint">
+        Compiles with <code>v -b js</code>, then runs the emitted JavaScript. No compilation server
+        involved.
+      </div>
+      <pre id="output"></pre>
+    </main>
+
+    <script type="module">
+      import { WASI } from 'https://jspm.dev/@wasmer/wasi@0.11.2';
+      import bindings from 'https://jspm.dev/@wasmer/wasi@0.11.2/lib/bindings/browser';
+      import { WasmFs } from 'https://jspm.dev/@wasmer/wasmfs@0.11.2';
+      import path from 'https://jspm.dev/@jspm/core@2/nodelibs/path';
+      import {
+        lowerI64Imports,
+        wasmTransformerInit,
+      } from 'https://unpkg.com/@wasmer/wasm-transformer@0.11.2/lib/optimized/wasm-transformer.esm.js';
+
+      const TRANSFORMER_WASM =
+        'https://unpkg.com/@wasmer/wasm-transformer@0.11.2/lib/wasm-pack/web/wasm_transformer_bg.wasm';
+
+      const SAMPLES = {
+        'Hello, world!': `println('Hello, world!')`,
+        Fibonacci: `fn fib(n int) int {
+	if n < 2 {
+		return n
+	}
+	return fib(n - 1) + fib(n - 2)
+}
+
+for i in 0 .. 10 {
+	println('fib(\${i}) = \${fib(i)}')
+}`,
+        'FizzBuzz': `for i in 1 .. 21 {
+	if i % 15 == 0 {
+		println('FizzBuzz')
+	} else if i % 3 == 0 {
+		println('Fizz')
+	} else if i % 5 == 0 {
+		println('Buzz')
+	} else {
+		println('\$i')
+	}
+}`,
+        'String interpolation': `name := 'V'
+version := 0.1
+println('Hello \${name}! Running in the browser, version \${version}.')`,
+        'Structs and methods': `struct Point {
+mut:
+	x int
+	y int
+}
+
+fn (p Point) norm2() int {
+	return p.x * p.x + p.y * p.y
+}
+
+p := Point{x: 3, y: 4}
+println('Point(\${p.x}, \${p.y}) has squared length \${p.norm2()}')`,
+        'Multiplication table': `for i in 1 .. 6 {
+	for j in 1 .. 6 {
+		print('\${i * j}\t')
+	}
+	println('')
+}`,
+      };
+
+      const $ = (id) => document.getElementById(id);
+      const editor = $('editor');
+      const outputEl = $('output');
+      const runBtn = $('run');
+      const stopBtn = $('stop');
+      const statusEl = $('status');
+
+      const setStatus = (text, isError = false) => {
+        statusEl.textContent = text;
+        statusEl.classList.toggle('error', isError);
+      };
+
+      let buffer = '';
+      const write = (text) => {
+        buffer += text;
+        outputEl.textContent = buffer;
+        outputEl.scrollTop = outputEl.scrollHeight;
+      };
+      const clearOutput = () => {
+        buffer = '';
+        outputEl.textContent = '';
+      };
+
+      const timers = new Set();
+      const listeners = [];
+      const stopProgram = () => {
+        for (const id of timers) clearInterval(id);
+        timers.clear();
+        for (const [type, listener, options] of listeners) {
+          removeEventListener(type, listener, options);
+        }
+        listeners.length = 0;
+        stopBtn.disabled = true;
+      };
+
+      class VCompileError extends Error {}
+
+      class ProgramExit extends Error {
+        constructor(code) {
+          super(`Program exited with code ${code}`);
+          this.code = code;
+        }
+      }
+
+      const programApi = {
+        console: {
+          log: (...args) => write(args.map(String).join(' ') + '\n'),
+          info: (...args) => write(args.map(String).join(' ') + '\n'),
+          warn: (...args) => write(args.map(String).join(' ') + '\n'),
+          error: (...args) => write(args.map(String).join(' ') + '\n'),
+          debug: (...args) => write(args.map(String).join(' ') + '\n'),
+          clear: clearOutput,
+        },
+        process: {
+          argv: ['v', 'main.v'],
+          env: {},
+          stdout: { write: (chunk) => (write(String(chunk)), true) },
+          stderr: { write: (chunk) => (write(String(chunk)), true) },
+          exit: (code = 0) => {
+            throw new ProgramExit(code);
+          },
+        },
+        setInterval: (fn, ms, ...args) => {
+          const id = setInterval(fn, ms, ...args);
+          timers.add(id);
+          stopBtn.disabled = false;
+          return id;
+        },
+        clearInterval: (id) => {
+          clearInterval(id);
+          timers.delete(id);
+        },
+        setTimeout: (fn, ms, ...args) => {
+          const id = setTimeout(fn, ms, ...args);
+          timers.add(id);
+          stopBtn.disabled = false;
+          return id;
+        },
+        clearTimeout: (id) => {
+          clearTimeout(id);
+          timers.delete(id);
+        },
+        addEventListener: (type, listener, ...options) => {
+          listeners.push([type, listener, options]);
+          addEventListener(type, listener, ...options);
+          stopBtn.disabled = false;
+        },
+        removeEventListener: (type, listener, ...options) => {
+          removeEventListener(type, listener, ...options);
+        },
+      };
+
+      const envProxy = new Proxy(
+        {},
+        {
+          get: (target, key) => {
+            if (typeof key === 'symbol' || key in target) return target[key];
+            return (...args) => {
+              throw new Error(
+                `Unsupported host import ${String(key)}(${args.join(', ')}) was called`,
+              );
+            };
+          },
+        },
+      );
+
+      let vModule = null;
+      let vlibBytes = null;
+
+      async function loadCompiler() {
+        const [wasm, vlib] = await Promise.all([
+          fetch('assets/v.wasm').then((r) => {
+            if (!r.ok) throw new Error(`assets/v.wasm: HTTP ${r.status}`);
+            return r.arrayBuffer();
+          }),
+          fetch('assets/vlib.tar').then((r) => {
+            if (!r.ok) throw new Error(`assets/vlib.tar: HTTP ${r.status}`);
+            return r.arrayBuffer();
+          }),
+        ]);
+        vlibBytes = new Uint8Array(vlib);
+
+        setStatus('Preparing WASI transformer…');
+        await wasmTransformerInit(TRANSFORMER_WASM);
+
+        setStatus('Compiling V compiler…');
+        vModule = await WebAssembly.compile(await lowerI64Imports(new Uint8Array(wasm)));
+      }
+
+      function extractTar(bytes, fs) {
+        const decoder = new TextDecoder();
+        const readString = (start, length) => {
+          let end = start;
+          while (end < start + length && bytes[end] !== 0) end++;
+          return decoder.decode(bytes.subarray(start, end));
+        };
+
+        const files = [];
+
+        let offset = 0;
+        while (offset + 512 <= bytes.length) {
+          const empty = bytes.subarray(offset, offset + 512).every((byte) => byte === 0);
+          if (empty) break;
+
+          const prefix = readString(offset + 345, 155);
+          const name = readString(offset, 100);
+          const pathName = (prefix ? prefix + '/' + name : name).replace(/^\/+/, '');
+          const size = Number.parseInt(readString(offset + 124, 12).trim(), 8) || 0;
+          const type = bytes[offset + 156] === 0 ? '0' : String.fromCharCode(bytes[offset + 156]);
+          const dataStart = offset + 512;
+          const target = '/' + pathName;
+
+          if (type === '5') {
+            fs.mkdirSync(target, { recursive: true });
+          } else if (type === '0') {
+            files.push([target, bytes.subarray(dataStart, dataStart + size)]);
+          }
+          offset = dataStart + Math.ceil(size / 512) * 512;
+        }
+
+        for (const [target, data] of files) {
+          const dir = target.slice(0, target.lastIndexOf('/'));
+          if (dir) fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(target, data);
+        }
+      }
+
+      async function runV(source) {
+        const { fs } = new WasmFs();
+
+        fs.writeFileSync('/v', 'v');
+        fs.mkdirSync('/proc/self', { recursive: true });
+        fs.symlinkSync('/v', '/proc/self/exe');
+        path.win32 = path;
+        extractTar(vlibBytes, fs);
+
+        fs.writeFileSync('/main.js', '');
+        fs.writeFileSync('/main.v', source);
+
+        let compiled = true;
+        const wasi = new WASI({
+          args: ['v', '-b', 'js', '-nocolor', 'main.v'],
+          bindings: {
+            ...bindings,
+            fs,
+            path,
+            hrtime: () => 0,
+            exit: (status) => {
+              if (status) compiled = false;
+            },
+          },
+          preopens: { '/': '/', '.': '/' },
+        });
+
+        const instance = await WebAssembly.instantiate(vModule, {
+          ...wasi.getImports(vModule),
+          env: envProxy,
+        });
+
+        try {
+          wasi.start(instance);
+        } catch {
+          compiled = false;
+        }
+
+        if (!compiled) {
+          const stderr = fs.readFileSync(2, 'utf-8');
+          if (stderr) write(stderr.endsWith('\n') ? stderr : stderr + '\n');
+          throw new VCompileError('V compilation failed');
+        }
+
+        const js = fs.readFileSync('main.js', 'utf-8');
+        if (!js.trim()) {
+          throw new VCompileError('V produced no output');
+        }
+        execute(js);
+      }
+
+      function execute(js) {
+        const names = Object.keys(programApi);
+        const values = names.map((name) => programApi[name]);
+        const fn = new Function(...names, js);
+        fn(...values);
+      }
+
+      runBtn.addEventListener('click', async () => {
+        stopProgram();
+        clearOutput();
+        runBtn.disabled = true;
+        setStatus('Compiling…');
+
+        await new Promise(requestAnimationFrame);
+
+        try {
+          await runV(editor.value);
+          setStatus('Ran successfully.');
+        } catch (error) {
+          if (error instanceof ProgramExit) {
+            const label = error.code === 0 ? 'Program exited.' : `Program exited with code ${error.code}.`;
+            setStatus(label, error.code !== 0);
+          } else if (error instanceof VCompileError) {
+            setStatus('Compilation failed.', true);
+          } else {
+            write((error?.stack || String(error)) + '\n');
+            setStatus('Error.', true);
+          }
+        } finally {
+          runBtn.disabled = false;
+        }
+      });
+
+      stopBtn.addEventListener('click', stopProgram);
+
+      editor.addEventListener('keydown', (event) => {
+        if (event.key === 'Tab') {
+          event.preventDefault();
+          const { selectionStart: start, selectionEnd: end, value } = editor;
+          editor.value = value.slice(0, start) + '\t' + value.slice(end);
+          editor.selectionStart = editor.selectionEnd = start + 1;
+        }
+      });
+
+      const samplesEl = $('samples');
+      for (const name of Object.keys(SAMPLES)) {
+        const option = document.createElement('option');
+        option.value = name;
+        option.textContent = name;
+        samplesEl.append(option);
+      }
+      samplesEl.addEventListener('change', () => {
+        editor.value = SAMPLES[samplesEl.value];
+        clearOutput();
+        stopProgram();
+      });
+
+      editor.value = SAMPLES['Hello, world!'];
+
+      loadCompiler()
+        .then(() => {
+          setStatus('Ready.');
+          runBtn.disabled = false;
+        })
+        .catch((error) => {
+          console.error(error);
+          setStatus('Failed to load compiler.', true);
+          write((error?.stack || String(error)) + '\n');
+        });
+    </script>
+  </body>
+</html>
