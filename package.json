@@ -6,6 +6,13 @@
   "license": "MIT",
   "description": "Proof of concept: compile and run V (vlang) in the browser, no server",
   "scripts": {
-    "start": "node serve.mjs"
+    "start": "node serve.mjs",
+    "setup:clang": "node scripts/setup-clang.mjs",
+    "build:assets": "docker build --output type=local,dest=./assets build",
+    "dev:compile": "node build/dev-compile.cjs build/out",
+    "dev:run": "node build/dev-run.mjs build/out/v-out.c"
+  },
+  "dependencies": {
+    "@live-codes/clang-wasm": "^0.3.0"
   }
 }

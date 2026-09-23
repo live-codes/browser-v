@@ -1,2 +1,5 @@
 node_modules/
+build/out/
+build/v-compiler.cjs
+assets/clang/
 *.log
