@@ -45,20 +45,41 @@ The obvious plan is the old `v-wasm` playground's: compile with `v -b js`. That 
 the self-hosted "V3" compiler and its driver states plainly *"V3 has no JavaScript backend"*
 (`vlib/v/driver/driver.v:7597`).
 
-`-b wasm` looks like the replacement, and is not:
+**V does have a native WebAssembly code generator**, and this file used to say it did not. It lives in
+`vlib/v/gen/wasm/`, and `-b wasm` routes to it: `wasmgen.Gen.new(...)` then `g.gen()` and
+`g.write(output_file)`, which writes the module straight to `-o`. What the earlier note had actually
+hit was a compiler built *without* that generator, which falls back to the C route and then asks for a
+C compiler it does not have:
 
 ```
-$ v -b wasm -o main.wasm main.v
+$ v -b wasm -o main.wasm main.v          # compiler built without the backend
 linking target wasm32_emscripten/wasm32 from host linux/amd64 is not supported by the default C
 compiler; use -o file.c and compile it with a target toolchain
 ```
 
-`-b wasm` selects the wasm32 source set but still generates **C**, then asks a C compiler to link it.
-There is no native wasm code generator to reach. The one form that produces output is
-`-b c -os wasm32_emscripten`, and the C it emits is **free of Emscripten**: a hello-world comes to
-275 KB of plain libc C with zero occurrences of `emscripten` and no `__EMSCRIPTEN__` guards. So the
-pipeline above is the short way round, and it is the same shape as the sibling `browser-nim` PoC
-(Nim → C → clang-wasm → wasm).
+That is a compile-time property, not a runtime one: the dispatch block is behind `$if !skip_wasm ?`,
+and V's self-build compiles in **only the C backend** by default (`vlib/v/driver/driver.v:9937`).
+`-compile-backend wasm` opts it back in, and `build-v-wasm.sh` carries that behind
+`INCLUDE_WASM_BACKEND=1`. Two things stop it being the default:
+
+- **The generator covers very little.** It is V3's port, working off the flat AST, and it supports much
+  less than the one in the 0.5.2 release — which did handle interpolation and structs. Measured against
+  these samples with the rebuilt compiler: `min` (an empty main) gives a 63 B module that runs; `t_fib`,
+  `t_interp` and `t_math` build and run but print `0`, because string interpolation, string
+  concatenation and `f64.str` are stubs it only *warns* about (`[v!] wasm: unsupported expr:
+  string_interp`); `t_arrays` fails outright (`wasm error: get_wasm_type: unreachable type '[]int'`) and
+  so does `t_struct`. A compiler that prints the wrong answer with a warning is worse for a playground
+  than one that refuses.
+- **At `-O1` the compiler it produces cannot parse a command line at all.** Every invocation, `-version`
+  included, dies with `option '<x>' requires a value` — an optimisation-dependent miscompile in the
+  bigger binary, and specific to this Emscripten/`wasm32_emscripten` build: a native Linux build of the
+  same pinned source with the same flag answers `-version` and emits a valid module. Building at
+  `EMCC_OPT=-O0` clears it, and is ~12x faster (2m41s against 34m).
+
+So the shipped pipeline is the C route, which compiles the whole language. The C it emits is **free of
+Emscripten**: a hello-world comes to 275 KB of plain libc C with zero occurrences of `emscripten` and
+no `__EMSCRIPTEN__` guards. That is the same shape as the sibling `browser-nim` PoC (Nim → C →
+clang-wasm → wasm).
 
 | Stage | Runs where | What it is |
 | --- | --- | --- |

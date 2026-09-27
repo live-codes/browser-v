@@ -1,0 +1,10 @@
+{
+  "v_commit": "e1ec613778753bfe9cd35f9178d472a9def890bf",
+  "v_version": "V 0.5.2 ",
+  "emcc": "emcc (Emscripten gcc/clang-like replacement + linker emulating GNU ld) 6.0.10 (d6c521a7f05449857c76bd99e396895583cf2083)",
+  "artifacts": {
+    "v.js": "19145c46e3ca22bd3724de4f726b27a03ed208f5eef435198888558b3ca940ee",
+    "v.wasm": "d8599deb6b7741b520574bee44e58e5ca5a3190c664458adfe170efd620ed673",
+    "vlib.tar": "ec3a459f6eb065a548295c1b2c12239677472567a254b96d23c9d3218dffc993"
+  }
+}

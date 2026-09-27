@@ -162,7 +162,32 @@ log "build a native V3 from the pinned source"
 "$WORK/v3" version
 
 log "generate C for the compiler, targeted at wasm32_emscripten"
-"$WORK/v3" -os wasm32_emscripten -o "$WORK/v.c" cmd/v
+# INCLUDE_WASM_BACKEND=1 keeps V's own WebAssembly code generator in the compiler, so it could do
+# `-b wasm -os wasi` and emit a module directly - no C, no clang, no sysroot. It is off by default
+# because it does not work here yet. Measured against these samples, with the rebuilt compiler:
+#
+#   min        63 B   runs, no output (it is an empty main)
+#   t_fib     373 B   runs, prints "0" ten times - string interpolation is a stub
+#   t_interp  304 B   runs, prints "0"          - string concatenation is a stub
+#   t_math   1004 B   runs, prints "0"          - f64.str and frexp are unsupported
+#   t_arrays     -    fails: `wasm error: get_wasm_type: unreachable type '[]int'`
+#   t_struct     -    fails
+#
+# The generator reports those as `[v!] wasm: unsupported expr/call: ...` *warnings* and carries on, so
+# the module builds, runs, and prints the wrong answer - worse for a playground than refusing. It is
+# V3's port of the generator (it works off the flat AST) and covers much less than the 0.5.2 release's,
+# which did handle interpolation and structs.
+#
+# Separately: with the generator compiled in, an emcc -O1 build cannot parse a command line at all -
+# every invocation, `-version` included, dies with `option '<x>' requires a value`. EMCC_OPT=-O0 clears
+# that (and is ~12x faster: 2m41s against 34m), so the misfire is optimisation-dependent, and it is
+# specific to this Emscripten/wasm32_emscripten build: a native Linux build of the same pinned source
+# with the same flag answers `-version` and emits a valid module.
+WASM_BACKEND_FLAG=""
+if [ "${INCLUDE_WASM_BACKEND:-0}" = "1" ]; then
+  WASM_BACKEND_FLAG="-compile-backend wasm"
+fi
+"$WORK/v3" -os wasm32_emscripten $WASM_BACKEND_FLAG -o "$WORK/v.c" cmd/v
 
 log "compile the compiler to wasm with emcc"
 emcc "$WORK/v.c" "$STUBS" -o "$OUT/v.js" \

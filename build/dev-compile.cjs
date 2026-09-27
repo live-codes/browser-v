@@ -117,6 +117,16 @@ const SOURCE =
     }
   }
 
+  // For -b wasm, where the module is the output rather than the C. See dev-run-vwasm.mjs.
+  if (process.env.DUMP_WASM) {
+    try {
+      fs.writeFileSync(process.env.DUMP_WASM, FS.readFile('/main.wasm'));
+      console.log(`# wrote generated wasm to ${process.env.DUMP_WASM}`);
+    } catch (error) {
+      console.log(`# could not dump wasm: ${error}`);
+    }
+  }
+
   console.log('# filesystem root:');
   for (const name of FS.readdir('/')) {
     if (name === '.' || name === '..') continue;
