@@ -4,6 +4,14 @@
   "description": "Run V (vlang) in the browser, on the V compiler compiled to WebAssembly",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/live-codes/browser-v.git",
+    "directory": "packages/v-wasm"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "exports": {
     ".": {
       "node": "./src/index.node.js",
