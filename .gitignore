@@ -1,5 +1,6 @@
 node_modules/
 build/out/
+build/opt/
 build/v-compiler.cjs
 assets/clang/
 *.log

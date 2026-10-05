@@ -14,6 +14,7 @@ const types = {
   '.css': 'text/css; charset=utf-8',
   '.wasm': 'application/wasm',
   '.tar': 'application/x-tar',
+  '.gz': 'application/gzip',
   '.v': 'text/plain; charset=utf-8',
   '.txt': 'text/plain; charset=utf-8',
   '.map': 'application/json; charset=utf-8',

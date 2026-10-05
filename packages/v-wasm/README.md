@@ -78,13 +78,15 @@ decides it is in a worker by finding `importScripts`, which module workers do no
 
 ## Where the assets come from
 
-The compiler ships inside the package: `v.js`, ~17 MB of `v.wasm`, and the ~14 MB `vlib.tar` standard
-library. Unlike the sibling `@live-codes/nim-wasm`, they are not a third-party prebuilt — they are built
-from a pinned V commit by this repository's own container pipeline (`build/build-v-wasm.sh`, run from
-`build/Dockerfile`), and the build records the SHA-256 of each artifact. Those digests are what
-[`src/asset-receipts.js`](./src/asset-receipts.js) pins, and `vlib.tar` (and, in Node, everything) is
-verified against them on every read — a host serving different bytes fails with both digests rather than
-running a different compiler.
+The compiler ships inside the package: `v.js`, `v.wasm.gz` (~5 MB) and the `vlib.tar.gz` standard
+library (~3.2 MB). The two large assets are **shipped gzipped and inflated in JavaScript**, so the size
+a host transfers does not depend on whether that host compresses anything itself. Unlike the sibling
+`@live-codes/nim-wasm`, they are not a third-party prebuilt — they are built from a pinned V commit by
+this repository's own container pipeline (`build/build-v-wasm.sh`, run from `build/Dockerfile`), which
+also post-optimises the linked module with binaryen and records the SHA-256 of each artifact. Those
+digests are what [`src/asset-receipts.js`](./src/asset-receipts.js) pins, and every read is verified
+against them — a host serving different bytes fails with both digests rather than running a different
+compiler.
 
 `THIRD-PARTY-NOTICES.md` says what is whose, and [`docs/ASSETS.md`](./docs/ASSETS.md) records how the
 bytes are produced and how to re-pin them.
@@ -115,7 +117,9 @@ assets and their receipts live.
 - **Programs are compiled `-gc none`**, so a long-running program grows memory rather than collecting.
 - **`getpid()` always returns 1**, and **`pipe()` fails** — WASI has no process ids and no pipes. A
   program that calls `os.execute` cannot be given a child process.
-- **`v.wasm` is unoptimised** — it is built `-O0`, which is the most obvious thing to improve.
+- **The compiler is optimised for size, not speed.** The module is post-optimised with
+  `wasm-opt -O2 --strip-debug`; a full `-O2` rebuild of the compiler itself is blocked by a
+  self-hosting bootstrap failure in this environment (see [`docs/ASSETS.md`](./docs/ASSETS.md)).
 - **The memfs is not shared** between the compiler's filesystem and the toolchain's; V's generated C
   includes a few of its own files by absolute path, and those are copied across.
 

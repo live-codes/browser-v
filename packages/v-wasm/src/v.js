@@ -13,6 +13,7 @@
 // That stub is why the worker has to be a classic worker: the bundle decides it is in a worker by
 // looking for `importScripts`, which module workers do not have, and without it it initialises for no
 // environment at all.
+import { inflateGzip } from './inflate.js';
 import { createCompilerCore } from './v-compile.js';
 
 const loadScript = (src) => {
@@ -56,8 +57,17 @@ export function loadVCompiler({ source, onStatus = () => {} }) {
 }
 
 async function loadInBrowser({ source, onStatus }) {
-	// The standard library is fetched here - and checked against its pin - rather than by Emscripten.
-	const vlib = await source.readAsset('vlib.tar');
+	// Both large assets are fetched here - and checked against their pins - rather than by Emscripten.
+	// They ship gzipped, so they are inflated here too; see `inflate.js` for why.
+	const [wasmGzip, vlibGzip] = await Promise.all([
+		source.readAsset('v.wasm.gz'),
+		source.readAsset('vlib.tar.gz')
+	]);
+	const [wasmBytes, vlibBytes] = await Promise.all([inflateGzip(wasmGzip), inflateGzip(vlibGzip)]);
+
+	// Compiled here rather than by Emscripten, so `v.wasm.gz` never has to exist as a plain `v.wasm`
+	// on the host, and so the bytes are the ones this package verified.
+	const wasmModule = await WebAssembly.compile(wasmBytes);
 
 	// The compiler reports on its own output as it runs, and whoever asked for this compile is the one
 	// who wants it. A buffer rather than a callback, because the loaded compiler is cached per asset
@@ -73,13 +83,17 @@ async function loadInBrowser({ source, onStatus }) {
 	}
 
 	const compiler = await factory({
-		locateFile: (file) => source.locateFile(file),
+		instantiateWasm: (imports, success) => {
+			const instance = new WebAssembly.Instance(wasmModule, imports);
+			success(instance, wasmModule);
+			return instance.exports;
+		},
 		print: (text) => output.push(text),
 		printErr: (text) => output.push(text)
 	});
 
 	const core = createCompilerCore({ FS: compiler.FS, callMain: compiler.callMain });
-	core.loadVlib(new Uint8Array(vlib));
+	core.loadVlib(vlibBytes);
 
 	return {
 		...core,

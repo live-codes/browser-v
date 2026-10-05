@@ -10,6 +10,7 @@
  */
 const path = require('node:path');
 const fs = require('node:fs');
+const zlib = require('node:zlib');
 
 const assetsDir = path.resolve(process.argv[2]);
 const sourceFile = process.argv[3] ? path.resolve(process.argv[3]) : null;
@@ -60,7 +61,8 @@ const SOURCE =
 
 (async () => {
   const t0 = Date.now();
-  const wasmBytes = fs.readFileSync(path.join(assetsDir, 'v.wasm'));
+  // Shipped gzipped; the package inflates it, so the harness does too.
+  const wasmBytes = zlib.gunzipSync(fs.readFileSync(path.join(assetsDir, 'v.wasm.gz')));
   const wasmModule = new WebAssembly.Module(wasmBytes);
   let stdoutBuf = '';
   const compiler = await createVCompiler({
@@ -82,7 +84,7 @@ const SOURCE =
   const FS = compiler.FS;
   FS.mkdirTree('/v');
   const t1 = Date.now();
-  extractTar(new Uint8Array(fs.readFileSync(path.join(assetsDir, 'vlib.tar'))), FS, '/v/');
+  extractTar(new Uint8Array(zlib.gunzipSync(fs.readFileSync(path.join(assetsDir, 'vlib.tar.gz')))), FS, '/v/');
   FS.mkdirTree('/tmp');
   console.log(`# vlib unpacked in ${Date.now() - t1} ms`);
 

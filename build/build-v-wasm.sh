@@ -17,7 +17,15 @@ V_COMMIT="${V_COMMIT:-e1ec613778753bfe9cd35f9178d472a9def890bf}"
 VROOT="${VROOT:-/v}"
 WORK="${WORK:-/work}"
 OUT="${OUT:-/out}"
-EMCC_OPT="${EMCC_OPT:--O1}"
+EMCC_OPT="${EMCC_OPT:--O0}"
+# binaryen's wasm-opt level, applied to the linked module after emcc. It is off by default and
+# separate from EMCC_OPT because the two can be chosen independently: emcc's own optimisation
+# changes the generated code, while wasm-opt cleans up what is already there. `--strip-debug` is
+# always passed alongside it, dropping the names section the -O0 build carries. `-Oz` on a module
+# this size takes tens of minutes, so `-O2` is the level worth using here.
+WASM_OPT="${WASM_OPT:-}"
+# The emsdk image keeps binaryen under /emsdk/upstream/bin, which is not always on PATH.
+WASM_OPT_BIN="${WASM_OPT_BIN:-/emsdk/upstream/bin/wasm-opt}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STUBS="$SCRIPT_DIR/v-wasm-stubs.c"
 
@@ -75,7 +83,13 @@ python3 - <<'PY'
 import pathlib
 p = pathlib.Path('/v/vlib/v/driver/driver.v')
 src = p.read_text()
-note = '\t// browser-v: no C toolchain to query or resolve includes with\n\treturn'
+
+# The early exits are wrapped in `$if wasm32_emscripten`, exactly like the os.user_os() and C-output
+# patches. That matters for a second reason beyond target selection: the native bootstrap and the
+# native V3 are built from this same source and must keep the real body, and a bare `return` would
+# leave the rest of the body as unreachable code, which V refuses to compile ("error: unreachable
+# code"). For the wasm target the block is kept, and its `return` never falls through.
+note = '\t$if wasm32_emscripten {\n\t\t// browser-v: no C toolchain to query or resolve includes with\n\t\treturn\n\t}'
 
 overlap = '\treturn (native_inputs_needed && building_v) || (!native_inputs_needed && scope_prealloc_stages)'
 assert overlap in src, 'overlap return not found'
@@ -87,7 +101,7 @@ src = src.replace(plain, plain + '\n' + note, 1)
 
 cached = 'fn prepare_v3_cache_external_inputs_scoped(mut state V3ModuleCacheState, a &flat.FlatAst, prefs &pref.Preferences, user_files []string, user_c_flags []string, c_compiler string, scope_enabled bool) bool {'
 assert cached in src, 'prepare_v3_cache_external_inputs_scoped not found'
-src = src.replace(cached, cached + '\n\t// browser-v: no C toolchain to query or resolve includes with\n\treturn false', 1)
+src = src.replace(cached, cached + '\n\t$if wasm32_emscripten {\n\t\t// browser-v: no C toolchain to query or resolve includes with\n\t\treturn false\n\t}', 1)
 
 p.write_text(src)
 print('patched', p)
@@ -214,6 +228,17 @@ emcc "$WORK/v.c" "$STUBS" -o "$OUT/v.js" \
   -sENVIRONMENT=web,worker,node \
   -sASSERTIONS=0
 
+log "optimize the linked module with binaryen"
+if [ -n "$WASM_OPT" ]; then
+  before=$(stat -c %s "$OUT/v.wasm")
+  "$WASM_OPT_BIN" "$WASM_OPT" --strip-debug "$OUT/v.wasm" -o "$OUT/v.wasm.opt"
+  mv "$OUT/v.wasm.opt" "$OUT/v.wasm"
+  after=$(stat -c %s "$OUT/v.wasm")
+  echo "wasm-opt $WASM_OPT --strip-debug: $before -> $after bytes"
+else
+  echo "wasm-opt: skipped (set WASM_OPT, e.g. -O2)"
+fi
+
 log "pack the standard library"
 # The library sources a user program can import, without the compiler's own
 # sources (vlib/v), test files or docs. That is what keeps the download in the
@@ -241,17 +266,31 @@ tar -rf "$OUT/vlib.tar" -C "$VROOT" \
   vlib/v/gen/c/manual_stdlib_c_headers.h
 echo "vlib.tar: $(du -h "$OUT/vlib.tar" | cut -f1)"
 
+log "gzip the two large assets"
+# Shipped compressed so the size a host transfers does not depend on the host compressing anything
+# itself; the package inflates them in JavaScript. `-f` rewrites in place to `<name>.gz`.
+gzip -9 -f "$OUT/v.wasm"
+gzip -9 -f "$OUT/vlib.tar"
+ls -l "$OUT/v.wasm.gz" "$OUT/vlib.tar.gz"
+
 log "receipt"
 V_VERSION="$("$WORK/v3" version | tr -d '\r')"
+WASM_OPT_VERSION="none"
+if [ -n "$WASM_OPT" ]; then
+  WASM_OPT_VERSION="$("$WASM_OPT_BIN" --version 2>/dev/null | tr -d '\r')"
+fi
 cat > "$OUT/receipt.json" <<EOF
 {
   "v_commit": "$V_COMMIT",
   "v_version": "$V_VERSION",
   "emcc": "$(emcc --version | head -n 1 | tr -d '\r')",
+  "emcc_opt": "$EMCC_OPT",
+  "wasm_opt": "${WASM_OPT:-none}${WASM_OPT:+ --strip-debug}",
+  "wasm_opt_version": "$WASM_OPT_VERSION",
   "artifacts": {
     "v.js": "$(sha256sum "$OUT/v.js" | cut -d' ' -f1)",
-    "v.wasm": "$(sha256sum "$OUT/v.wasm" | cut -d' ' -f1)",
-    "vlib.tar": "$(sha256sum "$OUT/vlib.tar" | cut -d' ' -f1)"
+    "v.wasm.gz": "$(sha256sum "$OUT/v.wasm.gz" | cut -d' ' -f1)",
+    "vlib.tar.gz": "$(sha256sum "$OUT/vlib.tar.gz" | cut -d' ' -f1)"
   }
 }
 EOF

@@ -5,6 +5,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { gunzipSync } from 'node:zlib';
 import {
   createToolchain,
   compilerDiagnostics,
@@ -17,7 +18,8 @@ import { COMPILE_ARGS, SHIMS, SOURCE_PATCHES } from '../packages/v-wasm/src/shim
 const here = dirname(fileURLToPath(import.meta.url));
 const assets = join(here, '..', 'packages', 'v-wasm', 'assets', 'v');
 
-const vlibTar = readFileSync(join(assets, 'vlib.tar'));
+// Shipped gzipped; the package inflates it, so the harness does too.
+const vlibTar = gunzipSync(readFileSync(join(assets, 'vlib.tar.gz')));
 
 // V's generated C includes a few of its own files by absolute path ("/v/vlib/...").
 // The vlib tarball is the same tree, so the driver reads them out of it.

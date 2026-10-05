@@ -91,7 +91,7 @@ clang-wasm → wasm).
 
 | Stage | Runs where | What it is |
 | --- | --- | --- |
-| V → C | a worker, on the page | `packages/v-wasm/assets/v/v.wasm`, the V compiler built from a pinned commit, unpacking `vlib.tar` (the full standard library) |
+| V → C | a worker, on the page | `packages/v-wasm/assets/v/v.wasm.gz`, the V compiler built from a pinned commit, unpacking `vlib.tar.gz` (the full standard library) |
 | C → wasm | the same worker | `@live-codes/clang-wasm`: Clang 22 and LLD compiled to WebAssembly, with a `wasm32-wasi` sysroot |
 | run | the same worker | the module is instantiated with a WASI preview-1 host and its stdout is posted back |
 
@@ -144,10 +144,13 @@ npm run build:assets       # docker build --output type=local,dest=./packages/v-
 
 `build/Dockerfile` runs `build/build-v-wasm.sh`: fetch V at a pinned commit, patch it (below),
 bootstrap a native V, build a native V3 from the pinned sources, generate C for the compiler with
-`-os wasm32_emscripten`, compile that C to `v.js` + `v.wasm` with `emcc`, pack the standard library
-into `vlib.tar`, and write `receipt.json` with the V commit, the emcc version and the SHA-256 of every
-artifact. It writes them straight into the package (`packages/v-wasm/assets/v/`), which is where they
-are served from and pinned; `packages/v-wasm/docs/ASSETS.md` covers moving the pin.
+`-os wasm32_emscripten`, compile that C to `v.js` + `v.wasm` with `emcc`, optimise the module with
+`wasm-opt -O2 --strip-debug`, pack the standard library into `vlib.tar`, gzip the two large outputs
+(shipped compressed and inflated in the page), and write `receipt.json` with the V commit, the emcc and
+binaryen versions and the SHA-256 of every artifact. It writes them straight into the package
+(`packages/v-wasm/assets/v/`), which is where they are served from and pinned;
+`packages/v-wasm/docs/ASSETS.md` covers moving the pin and the bootstrap limitation that keeps
+`EMCC_OPT` at `-O0`.
 
 `vlib.tar` is pruned to what compiling a program can reach — the library sources without test files,
 docs or the compiler's own `vlib/v` tree, whose sources are already compiled into `v.wasm`. That takes
@@ -192,19 +195,24 @@ Both are off by default.
 
 ## What was verified
 
-- The pipeline builds `v.js`, `v.wasm` and `vlib.tar` from commit `e1ec6137`; `receipt.json` records
-  their hashes, and `packages/v-wasm/src/asset-receipts.js` pins them.
-- Six sample programs compile, build and run on the page, including `import math`.
+- The pipeline builds `v.js`, `v.wasm` and `vlib.tar` from commit `e1ec6137`, optimises the module with
+  binaryen and gzips the two large outputs; `receipt.json` records their hashes, and
+  `packages/v-wasm/src/asset-receipts.js` pins them.
+- Six sample programs compile, build and run on the page, including `import math`, against the
+  compressed, optimised assets.
 - V's diagnostics come through with source context and the ANSI colour stripped.
-- The same artifacts run from Node (compiler and toolchain), which is how the stages were developed.
+- The same artifacts run from Node (compiler and toolchain), which is how the stages were developed,
+  and `packages/v-wasm` has a test suite that runs them there (`npm test`).
 
 ## Known limitations
 
-- **~60 MB of assets** — ~31 MB of compiler and standard library, plus ~29 MB of toolchain — fetched on
-  first use and kept warm after that; the first compile of a session is the slow one.
-- **`v.wasm` is unoptimised (~18 MB)** — built `-O0`. It is downloaded on every page load, so it is the
-  most obvious thing to improve. `EMCC_OPT` selects the level and defaults to `-O1`; binaryen at `-O2`
-  on a module this size takes tens of minutes.
+- **~37 MB of assets** — ~8 MB of compiler and standard library (shipped gzipped and inflated on the
+  page), plus ~29 MB of toolchain — fetched on first use and kept warm after that; the first compile of
+  a session is the slow one.
+- **The compiler is optimised for size, not speed.** It is built `-O0` and post-optimised with
+  `wasm-opt -O2 --strip-debug` (17.2 MB → 14.0 MB on disk → 5.2 MB gzipped). A full `-O2` recompile
+  would shrink and speed it up further, but it is blocked by a self-hosting bootstrap failure in the
+  pinned emsdk image; see `packages/v-wasm/docs/ASSETS.md`.
 - **C interop is disabled** in the compiler, a consequence of skipping the native-input scan: a program
   using `#include` / `#flag` against C headers will not resolve them.
 - **Programs are compiled `-gc none`**, so a long-running program grows memory rather than collecting.
@@ -231,8 +239,8 @@ Both are off by default.
 
 ## Provenance and licensing
 
-- `assets/v.js`, `assets/v.wasm` — built here from the V compiler at a pinned commit; V is MIT.
-- `assets/vlib.tar` — the V standard library from the same commit; MIT.
+- `packages/v-wasm/assets/v/v.js`, `v.wasm.gz` — built here from the V compiler at a pinned commit; V is MIT.
+- `packages/v-wasm/assets/v/vlib.tar.gz` — the V standard library from the same commit; MIT.
 - `assets/clang/` — `@live-codes/clang-wasm` (MIT): Clang and LLD compiled to WebAssembly, the
   `wasm32-wasi` sysroot, and memfs, all Apache-2.0 with the LLVM exception. Copied from the npm
   package rather than committed.

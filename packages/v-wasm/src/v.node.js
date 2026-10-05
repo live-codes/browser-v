@@ -11,6 +11,7 @@
 import { createRequire } from 'node:module';
 import vm from 'node:vm';
 
+import { inflateGzip } from './inflate.js';
 import { createCompilerCore } from './v-compile.js';
 
 const compilers = new Map();
@@ -27,11 +28,12 @@ export function loadVCompiler({ source, onStatus = () => {} }) {
 }
 
 async function loadInNode({ source, onStatus }) {
-	const [bundleBytes, wasmBytes, tarBytes] = await Promise.all([
+	const [bundleBytes, wasmGzip, vlibGzip] = await Promise.all([
 		source.readAsset('v.js'),
-		source.readAsset('v.wasm'),
-		source.readAsset('vlib.tar')
+		source.readAsset('v.wasm.gz'),
+		source.readAsset('vlib.tar.gz')
 	]);
+	const [wasmBytes, vlibBytes] = await Promise.all([inflateGzip(wasmGzip), inflateGzip(vlibGzip)]);
 	const bundleText = new TextDecoder('utf-8', { fatal: true }).decode(bundleBytes);
 
 	// The compiler reports on its own output as it runs, and whoever asked for this compile is the one
@@ -97,7 +99,7 @@ async function loadInNode({ source, onStatus }) {
 	});
 
 	const core = createCompilerCore({ FS: compiler.FS, callMain: compiler.callMain });
-	core.loadVlib(new Uint8Array(tarBytes));
+	core.loadVlib(vlibBytes);
 
 	return {
 		...core,

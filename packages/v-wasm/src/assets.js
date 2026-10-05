@@ -3,9 +3,8 @@
 // Two sources behind one shape, because everything downstream only needs "what URL is the loader at",
 // "where is anything else" and "give me this file":
 //
-//   hosted   - a base URL. The loader is evaluated from there and Emscripten fetches `v.wasm` from
-//              there itself, so those two are only as good as the host they are served from.
-//              `vlib.tar` is fetched here, and therefore checked.
+//   hosted   - a base URL. The loader and the two compressed assets are all fetched from there, and
+//              read here, so each can be checked as it arrives.
 //   packaged - the assets that ship inside this package, on disk. Only reachable through the `node`
 //              condition, because a browser cannot read a file inside an npm package. Everything is
 //              read here, so everything is checked.
@@ -90,16 +89,14 @@ function createHostedSource(options) {
 		key: baseUrl.href,
 		description: baseUrl.href,
 		baseUrl: baseUrl.href,
-		// Where the Emscripten bundle is, and where it should look for `v.wasm`.
+		// Where the Emscripten bundle is. It is the one thing Emscripten itself fetches; the module and
+		// the standard library are read and checked here.
 		bundleUrl: new URL('v.js', baseUrl).href,
-		locateFile: (name) => new URL(name, baseUrl).href,
 		async readAsset(name) {
 			const url = new URL(name, baseUrl);
 			const response = await fetch(url);
 			if (!response.ok) throw new Error(`Failed to load the compiler asset ${url}: ${response.status}`);
 			const bytes = new Uint8Array(await response.arrayBuffer());
-			// Only the assets this package reads itself can be checked; Emscripten fetches the loader
-			// and `v.wasm`.
 			return verifyReceipt(name, bytes);
 		}
 	};
@@ -113,7 +110,6 @@ function createPackagedSource(packaged) {
 		// No URL: this package reads the bundle itself and hands Emscripten the bytes, so nothing is
 		// fetched and everything can be checked.
 		bundleUrl: null,
-		locateFile: null,
 		readAsset: async (name) => verifyReceipt(name, await packaged.readFile(name))
 	};
 }
