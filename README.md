@@ -23,6 +23,14 @@ compilation server.
 
 ![The playground after running a sample](docs/screenshot.png)
 
+## The package
+
+The compiler, the C → wasm driver and the run loop are a standalone library,
+[`@live-codes/v-wasm`](./packages/v-wasm): `createCompiler()` loads the V compiler and
+`compiler.run(code, stdin)` compiles, links and runs a program, returning its output and diagnostics.
+This page's worker is a thin shell over it, loading the package's classic-script build. The compiler's
+assets and their pinned receipts live in the package, so the page and Node share one implementation.
+
 ## Status
 
 **Working.** A program typed into the page is compiled and run, and its output appears:
@@ -83,7 +91,7 @@ clang-wasm → wasm).
 
 | Stage | Runs where | What it is |
 | --- | --- | --- |
-| V → C | a worker, on the page | `assets/v.wasm`, the V compiler built from a pinned commit, unpacking `assets/vlib.tar` (the full standard library) |
+| V → C | a worker, on the page | `packages/v-wasm/assets/v/v.wasm`, the V compiler built from a pinned commit, unpacking `vlib.tar` (the full standard library) |
 | C → wasm | the same worker | `@live-codes/clang-wasm`: Clang 22 and LLD compiled to WebAssembly, with a `wasm32-wasi` sysroot |
 | run | the same worker | the module is instantiated with a WASI preview-1 host and its stdout is posted back |
 
@@ -97,8 +105,8 @@ POSIX headers. The sysroot that ships with `@live-codes/clang-wasm` used to be p
 demo needs (42 C headers), which was a defect rather than a policy: it kept `<unistd.h>` and dropped
 the two headers `<unistd.h>` includes, so that header could not be preprocessed at all. The package now
 restores wasi-libc's whole C header tree, and this page picks the fix up by re-staging `assets/clang/`
-from it. `assets/v-clang-shims.js` — shared by the worker and the Node driver, so there is one copy —
-is down from twenty-three entries to four:
+from it. `packages/v-wasm/src/shims.js` — shared by the worker and the Node driver, so there is one
+copy — is down from twenty-three entries to four:
 
 - **Empty headers** for `netdb.h`, `sys/wait.h` and `termios.h`, which wasi-libc does not ship at all.
   Empty is deliberate: if one of them turns out to be needed, the compile says so rather than silently
@@ -131,14 +139,15 @@ The V compiler is not taken from anyone else's build. It is built from a pinned 
 container, and the same inputs always produce the same artifacts:
 
 ```bash
-npm run build:assets       # docker build --output type=local,dest=./assets build
+npm run build:assets       # docker build --output type=local,dest=./packages/v-wasm/assets/v build
 ```
 
 `build/Dockerfile` runs `build/build-v-wasm.sh`: fetch V at a pinned commit, patch it (below),
 bootstrap a native V, build a native V3 from the pinned sources, generate C for the compiler with
 `-os wasm32_emscripten`, compile that C to `v.js` + `v.wasm` with `emcc`, pack the standard library
 into `vlib.tar`, and write `receipt.json` with the V commit, the emcc version and the SHA-256 of every
-artifact.
+artifact. It writes them straight into the package (`packages/v-wasm/assets/v/`), which is where they
+are served from and pinned; `packages/v-wasm/docs/ASSETS.md` covers moving the pin.
 
 `vlib.tar` is pruned to what compiling a program can reach — the library sources without test files,
 docs or the compiler's own `vlib/v` tree, whose sources are already compiled into `v.wasm`. That takes
@@ -184,24 +193,25 @@ Both are off by default.
 ## What was verified
 
 - The pipeline builds `v.js`, `v.wasm` and `vlib.tar` from commit `e1ec6137`; `receipt.json` records
-  their hashes.
+  their hashes, and `packages/v-wasm/src/asset-receipts.js` pins them.
 - Six sample programs compile, build and run on the page, including `import math`.
 - V's diagnostics come through with source context and the ANSI colour stripped.
 - The same artifacts run from Node (compiler and toolchain), which is how the stages were developed.
 
 ## Known limitations
 
-- **~29 MB of toolchain assets**, fetched on the first run and kept warm after that; the first compile
-  of a session is the slow one.
+- **~60 MB of assets** — ~31 MB of compiler and standard library, plus ~29 MB of toolchain — fetched on
+  first use and kept warm after that; the first compile of a session is the slow one.
 - **`v.wasm` is unoptimised (~18 MB)** — built `-O0`. It is downloaded on every page load, so it is the
   most obvious thing to improve. `EMCC_OPT` selects the level and defaults to `-O1`; binaryen at `-O2`
   on a module this size takes tens of minutes.
 - **C interop is disabled** in the compiler, a consequence of skipping the native-input scan: a program
   using `#include` / `#flag` against C headers will not resolve them.
 - **Programs are compiled `-gc none`**, so a long-running program grows memory rather than collecting.
-- **No stdin or argv yet.** The program runs with a WASI preview-1 environment and no preopened
-  directories, so file I/O inside the program will fail.
-- **`getpid()` always returns 1**, since WASI has no process ids.
+- **stdin and argv work; file I/O does not.** The program runs with a WASI preview-1 environment and no
+  preopened directories, so file I/O inside the program will fail, and `os.execute` cannot spawn a
+  child (WASI has no pipes).
+- **`getpid()` always returns 1 and `pipe()` fails**, since WASI has no process ids and no pipes.
 - **The memfs is not shared.** The compiler's filesystem and the toolchain's are separate, which is why
   the absolute includes have to be copied across.
 
@@ -210,10 +220,8 @@ Both are off by default.
 | File | Purpose |
 | --- | --- |
 | `index.html` | The page: editor, samples, status, output. |
-| `assets/compile-worker.js` | The worker: V compiler → C → toolchain → run. |
-| `assets/v-clang-shims.js` | The few headers V's C needs that wasi-libc and Clang still lack, plus the feature flags (shared with the Node driver). |
-| `assets/v.js`, `assets/v.wasm` | The V compiler, built by the pipeline. |
-| `assets/vlib.tar` | The V standard library the compiler compiles against (15 MB, pruned). |
+| `assets/compile-worker.js` | The worker: loads `@live-codes/v-wasm` and runs the pipeline off the page's thread. |
+| `packages/v-wasm/` | The library: the compiler, the toolchain driver, the shims, and the pinned assets and receipts. |
 | `assets/clang/` | The C toolchain's assets, copied from the npm package by `npm run setup:clang`. Not committed. |
 | `build/Dockerfile`, `build/build-v-wasm.sh` | The build pipeline for the compiler. |
 | `build/v-wasm-stubs.c` | The synchronous pthread/semaphore implementations. |

@@ -135,9 +135,10 @@
 
       <textarea id="editor" spellcheck="false" wrap="off"></textarea>
       <div class="hint">
-        Runs the whole toolchain on the page, in a worker: the V compiler takes your program to C
-        against the full standard library, then Clang and LLD — also WebAssembly — build that C and
-        run it. The first run downloads the C toolchain (~29 MB).
+        Runs the whole toolchain on the page, in a worker, through <code>@live-codes/v-wasm</code>: the
+        V compiler takes your program to C against the full standard library, then Clang and LLD — also
+        WebAssembly — build that C and run it. The compiler assets (~31 MB) and the C toolchain
+        (~29 MB) are served from this repository and downloaded on first use.
       </div>
       <pre id="output"></pre>
     </main>
@@ -224,7 +225,7 @@ fn main() {
       let busy = false;
 
       worker.addEventListener('message', (event) => {
-        const { type, text, output, exitCode, log, diagnostics, error } = event.data || {};
+        const { type, text, output, exitCode, log, errors } = event.data || {};
 
         if (type === 'ready') {
           setStatus('Ready.');
@@ -248,19 +249,11 @@ fn main() {
           );
           return;
         }
-        if (type === 'v-failed') {
+        if (type === 'failed') {
           clearOutput();
-          if (log) write(log);
-          if (error) write('\n' + error + '\n');
-          if (!log && !error) write('V produced no output.\n');
+          for (const line of errors ?? []) write(line + '\n');
+          if (!errors?.length && !log) write('Compilation failed with no output.\n');
           setStatus('Compilation failed.', true);
-          return;
-        }
-        if (type === 'c-failed') {
-          clearOutput();
-          write('The generated C did not build:\n\n');
-          for (const line of diagnostics ?? []) write(line + '\n');
-          setStatus('C build failed.', true);
         }
       });
 

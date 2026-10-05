@@ -11,13 +11,11 @@ import {
   CLANG_DRIVER_DEFAULT_ARGS,
 } from '@live-codes/clang-wasm/toolchain';
 
-const here = dirname(fileURLToPath(import.meta.url));
-const assets = join(here, '..', 'assets');
+// The shim list lives in the package, shared with the page's worker rather than duplicated.
+import { COMPILE_ARGS, SHIMS, SOURCE_PATCHES } from '../packages/v-wasm/src/shims.js';
 
-// The shim list is shared with the page's worker rather than duplicated. The file
-// is a plain script that sets a global, so evaluating it is enough.
-new Function(readFileSync(join(assets, 'v-clang-shims.js'), 'utf8'))();
-const { SHIMS, SOURCE_PATCHES, COMPILE_ARGS } = globalThis.LiveCodesVClang;
+const here = dirname(fileURLToPath(import.meta.url));
+const assets = join(here, '..', 'packages', 'v-wasm', 'assets', 'v');
 
 const vlibTar = readFileSync(join(assets, 'vlib.tar'));
 

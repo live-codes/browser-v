@@ -8,11 +8,17 @@
   "scripts": {
     "start": "node serve.mjs",
     "setup:clang": "node scripts/setup-clang.mjs",
-    "build:assets": "docker build --output type=local,dest=./assets build",
+    "build:assets": "docker build --output type=local,dest=./packages/v-wasm/assets/v build",
+    "build:package": "npm --prefix packages/v-wasm run build:iife",
     "dev:compile": "node build/dev-compile.cjs build/out",
-    "dev:run": "node build/dev-run.mjs build/out/v-out.c"
+    "dev:run": "node build/dev-run.mjs build/out/v-out.c",
+    "test": "npm --prefix packages/v-wasm test"
   },
   "dependencies": {
-    "@live-codes/clang-wasm": "^0.3.0"
+    "@live-codes/clang-wasm": "^0.3.0",
+    "@live-codes/v-wasm": "file:./packages/v-wasm"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
   }
 }
