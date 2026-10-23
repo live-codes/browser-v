@@ -42,6 +42,7 @@ this point rather than at the first `run`.
 
 | Option | Meaning |
 | --- | --- |
+| `target` | `'wasm'` (the default) compiles to C, links it and runs it; `'c'` stops at the generated C and hands it back as `compiledCode`, without loading the Clang toolchain. |
 | `baseUrl` | Where this package's assets are served from. **Optional in Node**, where the assets that ship in the package are read off disk; required anywhere else. |
 | `clangBaseUrl` | Where the Clang toolchain's assets are. Passed to `@live-codes/clang-wasm`, whose rules apply — required in a browser, optional in Node — and whose runtime is *shared* with any C/C++ compilers created against the same assets, so a page running both pays for the toolchain once or not at all. |
 | `compileArgs` | Extra V flags, before the source path, e.g. `['-d', 'myflag']`. |
@@ -52,6 +53,9 @@ this point rather than at the first `run`.
 | `onOutput` | `(text, stream) => {}` — the program's output as it is written. See Notes. |
 | `onStatus` | `(text) => {}`, for a status line. |
 
+`targets` (the list) and `TARGETS` are exported, so a caller can check the names rather than hard-code
+them.
+
 ### `compiler.run(code, input?, runOptions?)`
 
 | Field | Meaning |
@@ -59,12 +63,40 @@ this point rather than at the first `run`.
 | `stdout` / `stderr` | Everything the program wrote to each stream. |
 | `output` | Both, in the order the program wrote them — what a terminal would have shown. |
 | `errors` | V's, clang's and the linker's diagnostics, one string per line, colour removed. **Empty when it built**, so `errors.length` is a reliable failure test. |
-| `exitCode` | The program's status, or `null` if it never ran because the compile failed. |
-| `compileMs` | Wall clock for the whole build — V's codegen plus clang and the link, which is what a caller is actually waiting for. |
+| `exitCode` | The program's status, or `null` if it never ran — because the compile failed, or because the target was `c`, which never runs. |
+| `compileMs` | Wall clock for the compile. For `wasm` that is V's codegen plus clang and the link; for `c` it is V's codegen alone. |
 | `runMs` | Wall clock for the run, or `null` if it did not run. |
+| `compiledCode` | The `c` target's artifact: the generated C, as one string. Absent otherwise. |
 
 `input` is handed to the program as stdin once and then closed. `runOptions` may override `args`,
-`compileArgs`, `clangArgs`, and `onOutput`. `compiler.assetSource` says where its assets came from.
+`compileArgs`, `clangArgs`, and `onOutput`. `compiler.assetSource` says where its assets came from, and
+`compiler.target` says what was resolved.
+
+### Taking the C away
+
+`target: 'c'` stops at the code generation the `wasm` target would carry on from, and hands back what V
+wrote instead of compiling and running it. Nothing executes, so `exitCode`, `runMs` and the output are
+all empty and `compiledCode` is the whole result — the generated C, as one string:
+
+```js
+import { createCompiler } from '@live-codes/v-wasm';
+
+const compiler = await createCompiler({ target: 'c' });
+const { compiledCode } = await compiler.run(`
+  fn main() {
+    println('hello')
+  }
+`);
+// '// V comptime_definitions: … int main(…) { … }'
+```
+
+Two things are worth knowing about the C:
+
+- **It is one translation unit.** V writes a single file that `#include`s its standard library by
+  absolute path (`/v/vlib/...`). To compile it yourself you need V's `vlib` tree at those paths — which
+  the compiler's own filesystem holds, and which the `wasm` target resolves for you.
+- **The `c` target never loads the Clang toolchain**, so it costs one V compile (a few hundred
+  milliseconds warm) and none of the ~29 MB toolchain download.
 
 ### `@live-codes/v-wasm/iife`
 
@@ -152,8 +184,9 @@ npm test    # node --test test/*.test.mjs
 Real compiles and real runs, in Node, off the assets that ship in this package: the full pipeline end to
 end, the result shape, diagnostics for a program that does not compile, streaming output, program argv
 and stdin, `compileArgs`, one compiler across repeated runs, queued runs, the error a browser gets when
-`baseUrl` is missing, and a representative slice of the standard library (see
-[Standard library](#standard-library)).
+`baseUrl` is missing, a representative slice of the standard library (see
+[Standard library](#standard-library)), and the generated C the `c` target hands back — including that
+it does so without ever loading the Clang toolchain.
 
 ## Licence
 

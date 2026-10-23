@@ -5,6 +5,7 @@
 import { resolveAssetSource } from './assets.js';
 import { compileVSource, loadClangToolchain, runArtifact } from './clang.js';
 import { compilerDiagnostics, stripAnsi } from './output.js';
+import { DEFAULT_TARGET, resolveTarget, TARGETS } from './targets.js';
 
 export function createApi({ packaged, loadVCompiler }) {
 	/**
@@ -12,6 +13,9 @@ export function createApi({ packaged, loadVCompiler }) {
 	 * loaded once and kept warm - it holds the whole standard library in its memory filesystem.
 	 *
 	 * @param {object} [options]
+	 * @param {'wasm'|'c'} [options.target] - `wasm` (the default) compiles to C, links it with
+	 *   `@live-codes/clang-wasm` and runs it; `c` stops at the generated C and hands it back as
+	 *   `compiledCode`, without loading the ~29 MB toolchain.
 	 * @param {string} [options.baseUrl] - where the compiler's assets are served from. Required
 	 *   anywhere without a filesystem; in Node it can be omitted to use the assets in this package.
 	 * @param {string} [options.clangBaseUrl] - where the Clang toolchain's assets are. Passed to
@@ -28,6 +32,7 @@ export function createApi({ packaged, loadVCompiler }) {
 	 * @param {(text: string) => void} [options.onStatus] - what is happening, for a status line.
 	 */
 	async function createCompiler(options = {}) {
+		const target = resolveTarget(options.target ?? DEFAULT_TARGET);
 		const source = resolveAssetSource(options, packaged);
 		const onLog = options.onLog ?? (() => {});
 		const onStatus = options.onStatus ?? (() => {});
@@ -79,20 +84,24 @@ export function createApi({ packaged, loadVCompiler }) {
 		});
 
 		return {
+			/** The resolved target: `wasm` or `c`. */
+			target,
+
 			/** Where the compiler's assets came from, for an error message a user can act on. */
 			assetSource: source.description,
 
 			/**
-			 * Compile and run a program.
+			 * Compile and run a program, or — for the `c` target — compile it and hand back the C.
 			 *
 			 * @param {string} code - the program source.
 			 * @param {string|Uint8Array} [input] - stdin, handed to the program once and then closed.
 			 * @param {object} [runOptions] - per-run overrides: `args`, `compileArgs`, `clangArgs`, and
 			 *   `onOutput`.
 			 * @returns {Promise<{stdout: string, stderr: string, output: string, errors: string[],
-			 *   exitCode: number|null, compileMs: number, runMs: number|null}>} `output` is stdout and
-			 *   stderr in the order the program wrote them. `errors` holds the compilers' diagnostics and
-			 *   is empty when it compiled; `exitCode` is null when the program never ran.
+			 *   exitCode: number|null, compileMs: number, runMs: number|null, compiledCode?: string}>}
+			 *   `output` is stdout and stderr in the order the program wrote them. `errors` holds the
+			 *   compilers' diagnostics and is empty when it compiled; `exitCode` is null when the program
+			 *   never ran, including for the `c` target, where `compiledCode` is the generated C.
 			 */
 			async run(code, input = '', runOptions = {}) {
 				if (typeof code !== 'string') {
@@ -111,6 +120,23 @@ export function createApi({ packaged, loadVCompiler }) {
 					const diagnostics = takeOutput();
 					if (!compiled.ok) {
 						return failure(Math.round(performance.now() - compileStarted), diagnostics);
+					}
+
+					// The source target stops where the WebAssembly one carries on: V's C, with no toolchain
+					// to load, no link and no run. There is no program output to collect - the C is the
+					// result.
+					if (target === TARGETS.C) {
+						return {
+							ok: true,
+							stdout: '',
+							stderr: '',
+							output: '',
+							errors: [],
+							exitCode: null,
+							compileMs: Math.round(performance.now() - compileStarted),
+							runMs: null,
+							compiledCode: compiled.cSource
+						};
 					}
 
 					// The toolchain is ~29 MB and loads on first use, so say so before the wait rather

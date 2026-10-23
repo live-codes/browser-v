@@ -2,8 +2,11 @@
 // and `createCompiler()` is enough on its own.
 import { createApi } from './api.js';
 import { packagedAssets } from './packaged.node.js';
+import { TARGETS } from './targets.js';
 import { loadVCompiler } from './v.node.js';
 
 const api = createApi({ packaged: packagedAssets, loadVCompiler });
 
 export const createCompiler = api.createCompiler;
+export { TARGETS };
+export const targets = Object.values(TARGETS);

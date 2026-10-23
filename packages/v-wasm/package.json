@@ -1,6 +1,6 @@
 {
   "name": "@live-codes/v-wasm",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Run V (vlang) in the browser, on the V compiler compiled to WebAssembly",
   "type": "module",
   "license": "MIT",
