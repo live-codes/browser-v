@@ -38,7 +38,7 @@ export const ASSET_RECEIPTS = Object.freeze({
 		sha256: '1ab62a9ce0e6aceb7b1545b4ea845b22fca3cd46664f5af78e9bbb13a8ab8a6f'
 	},
 	'vlib.tar.gz': {
-		bytes: 3374702,
-		sha256: '49726a825454d5673f93f4bccf413a6c704a839a08e534b0e32eeb783c986e2f'
+		bytes: 3393822,
+		sha256: '98e34097cbea9b4815316eb91e4f7b038773b14ee7b2d3d66bb77232d498731f'
 	}
 });

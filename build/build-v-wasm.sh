@@ -258,12 +258,20 @@ tar -cf "$OUT/vlib.tar" -C "$VROOT" \
 # still read from disk at run time: the header behind an $embed_file (Emscripten
 # is a cross target, so $embed_file reads rather than embeds), and the preludes
 # it injects. Add just those back.
+#
+# thirdparty/cJSON is here for a different reason: V's `json` module emits
+# `#include "cJSON.h"` and calls into cJSON, but does not embed the C. The package
+# compiles that one file as a second translation unit when a program uses it, and
+# reads both parts from this tree. Nothing else in thirdparty is added - the rest
+# needs C interop that a browser build does not have.
 tar -rf "$OUT/vlib.tar" -C "$VROOT" \
   --exclude='*_test.v' \
   --exclude='*.md' \
   vlib/v/preludes \
   vlib/v/embed_file \
-  vlib/v/gen/c/manual_stdlib_c_headers.h
+  vlib/v/gen/c/manual_stdlib_c_headers.h \
+  thirdparty/cJSON/cJSON.c \
+  thirdparty/cJSON/cJSON.h
 echo "vlib.tar: $(du -h "$OUT/vlib.tar" | cut -f1)"
 
 log "gzip the two large assets"

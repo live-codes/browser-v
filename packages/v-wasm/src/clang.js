@@ -21,7 +21,20 @@ import {
 } from '@live-codes/clang-wasm/toolchain';
 
 import { makeStdin } from './output.js';
-import { COMPILE_ARGS, SHIMS, SOURCE_PATCHES } from './shims.js';
+import { COMPILE_ARGS, SHIMS, SOURCE_PATCHES, SOURCE_SUFFIX } from './shims.js';
+
+// Third-party C that the V standard library calls into but does not embed in the generated C. V's own
+// build hands these `.c` files to the C compiler as separate translation units; the toolchain entry this
+// package uses has no multi-file form, so the source is appended to the same translation unit, with the
+// header mounted so the generated `#include` resolves. Only the ones a program actually asks for are
+// added, so a program that does not use the module pays nothing.
+const THIRD_PARTY = {
+	'cJSON.h': {
+		header: '/v/thirdparty/cJSON/cJSON.h',
+		source: '/v/thirdparty/cJSON/cJSON.c',
+		unit: 'cJSON.c'
+	}
+};
 
 const toolchains = new Map();
 
@@ -61,7 +74,47 @@ const mountShims = (toolchain) => {
 // compiler's own and static, so a path only has to be written once.
 const mountedIncludes = new WeakMap();
 
+// Third-party headers already mounted, per toolchain, for the same reason.
+const mountedThirdParty = new WeakMap();
+
 const ABSOLUTE_INCLUDE = /#include\s+"(\/[^"]+)"/g;
+
+/**
+ * Append the third-party source the generated C asks for, and mount its header.
+ *
+ * A unit is only added when something in the C names its header, so a program that does not import the
+ * module gets neither the code nor the symbols. The files are read from the compiler's filesystem, which
+ * is where `vlib.tar` unpacks V's own `thirdparty/` tree.
+ *
+ * @returns {Array<{path: string, content: string}>} workspace files to compile and link alongside
+ *   the generated C, empty when nothing is needed.
+ */
+const collectThirdParty = (toolchain, cSource, readInclude) => {
+	let seen = mountedThirdParty.get(toolchain);
+	if (!seen) {
+		seen = new Set();
+		mountedThirdParty.set(toolchain, seen);
+	}
+
+	const units = [];
+	for (const [header, files] of Object.entries(THIRD_PARTY)) {
+		// Either spelling: V emits `#include "cJSON.h"` when the header is not in its own tree, and
+		// `#include "/v/thirdparty/cJSON/cJSON.h"` once it is (so a build of this package with cJSON
+		// packed produces the absolute form). Both mean the same unit is needed.
+		if (!cSource.includes(header) || seen.has(header)) continue;
+		try {
+			// The unit includes its own header by name, so it has to be on the include path as well as
+			// being what the generated absolute include is resolved to.
+			toolchain.addFile(header, readInclude(files.header));
+			units.push({ path: files.unit, content: readInclude(files.source) });
+			seen.add(header);
+		} catch {
+			// The compiler's tree does not carry this library; the compile will report the missing
+			// header itself, which is a clearer failure than one of ours.
+		}
+	}
+	return units;
+};
 
 /**
  * Copy the files V's generated C includes by absolute path into the toolchain's filesystem.
@@ -125,11 +178,13 @@ export async function compileVSource(
 	return toolchain.lock(async () => {
 		mountShims(toolchain);
 		mountAbsoluteIncludes(toolchain, cSource, readInclude);
+		const workspaceFiles = collectThirdParty(toolchain, cSource, readInclude);
 
 		const { result, raw, error } = await toolchain.captureCompilerOutput(() =>
-			toolchain.runtime.compileArtifact(SOURCE_PATCHES + cSource, {
+			toolchain.runtime.compileArtifact(SOURCE_PATCHES + cSource + SOURCE_SUFFIX, {
 				language: 'C',
 				fileName: 'main.c',
+				workspaceFiles,
 				compileArgs: [...CLANG_DRIVER_DEFAULT_ARGS, ...COMPILE_ARGS, ...compileArgs]
 			})
 		);

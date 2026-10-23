@@ -109,11 +109,31 @@ assets and their receipts live.
   while it runs, and in full in the result when it finishes; draw the first and trust the second.
 - **Memory.** Budget for the V compiler's own footprint, plus the Clang runtime's few hundred MB.
 
+## Standard library
+
+The full V standard library ships in `vlib.tar.gz`, and most of it works — the compiler decides what
+compiles, not a hand-picked subset. Verified in the test suite: `arrays`, `strings`, `strconv`, `math`,
+`math.big`, `rand`, `crypto.rand`, `crypto.sha256`, `crypto.sha512`, `crypto.md5`, `encoding.base64`,
+`encoding.hex`, `encoding.csv`, `hash.crc32`, `json`, `time`, `sync`, `datatypes`, `flag` and
+`benchmark`.
+
+Two parts of the C layer are what make that work, rather than the modules themselves:
+
+- **C11 atomics and POSIX semaphores**, which `sync`, `time` and `benchmark` reach, are supplied by the
+  shims in `src/shims.js` — the Clang resource directory is pruned, and WASI has no semaphores.
+- **`json` is backed by V's bundled cJSON.** The compiler emits `#include "cJSON.h"` and calls into
+  cJSON, but does not embed the C; the package compiles that one file as a second translation unit
+  alongside the generated C, only when a program uses it.
+
+What does not work is what a browser cannot provide: `net` / `net.http` (sockets and mbedTLS),
+`sqlite`, file and process I/O (`os` file functions, `os.execute`), and anything else needing a real C
+library behind `#include` / `#flag`.
+
 ## Limitations
 
 - **C interop is disabled.** The compiler is built with its native-input scan neutralised, which is what
   makes it start at all in the browser; a program using `#include` / `#flag` against C headers will not
-  resolve them.
+  resolve them. The standard library is the exception — see above.
 - **Programs are compiled `-gc none`**, so a long-running program grows memory rather than collecting.
 - **`getpid()` always returns 1**, and **`pipe()` fails** — WASI has no process ids and no pipes. A
   program that calls `os.execute` cannot be given a child process.
@@ -131,8 +151,9 @@ npm test    # node --test test/*.test.mjs
 
 Real compiles and real runs, in Node, off the assets that ship in this package: the full pipeline end to
 end, the result shape, diagnostics for a program that does not compile, streaming output, program argv
-and stdin, `compileArgs`, one compiler across repeated runs, queued runs, and the error a browser gets
-when `baseUrl` is missing.
+and stdin, `compileArgs`, one compiler across repeated runs, queued runs, the error a browser gets when
+`baseUrl` is missing, and a representative slice of the standard library (see
+[Standard library](#standard-library)).
 
 ## Licence
 

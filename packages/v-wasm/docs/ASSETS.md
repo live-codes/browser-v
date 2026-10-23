@@ -11,7 +11,7 @@ they need to be replaced.
 | --- | --- | --- |
 | `v.js` | 157 KB | The Emscripten loader for the compiler |
 | `v.wasm.gz` | 4.97 MB | The V 0.5.2 compiler, compiled from C to wasm32_emscripten, optimised, gzipped (13.95 MB before gzip) |
-| `vlib.tar.gz` | 3.22 MB | The V standard library the compiler compiles against, pruned, packed and gzipped (14.06 MB before gzip) |
+| `vlib.tar.gz` | 3.24 MB | The V standard library the compiler compiles against, pruned, packed and gzipped (14.16 MB before gzip) |
 
 The first two are a matched pair: `v.js` loads `v.wasm` through `Module.instantiateWasm` (Node, from
 these bytes) or `Module.locateFile` (a browser, by URL). Replacing one without the other will not work.
@@ -47,7 +47,10 @@ Everything is in `build/build-v-wasm.sh`; the summary is:
 3. Compile that C to `v.js` + `v.wasm` with `emcc` (currently `-O0`).
 4. Optimise the linked module with binaryen: `wasm-opt -O2 --strip-debug` (13.95 MB, from 17.23 MB).
 5. Pack the standard library into `vlib.tar`, pruned of test files, docs and the compiler's own `vlib/v`
-   tree (which is already compiled into `v.wasm`), with the few files read at run time added back.
+   tree (which is already compiled into `v.wasm`), with the few files read at run time added back. One
+   piece of `thirdparty/` is added too: `thirdparty/cJSON`, because V's `json` module emits
+   `#include "cJSON.h"` and calls into cJSON but leaves compiling it to the caller. The package compiles
+   that one file as a second translation unit when, and only when, a program uses `json`.
 6. `gzip -9` the module and the archive, so the package ships `v.wasm.gz` and `vlib.tar.gz`.
 7. Write `receipt.json` with the V commit, the emcc and binaryen versions, and the SHA-256 of every
    artifact.

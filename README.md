@@ -106,17 +106,21 @@ demo needs (42 C headers), which was a defect rather than a policy: it kept `<un
 the two headers `<unistd.h>` includes, so that header could not be preprocessed at all. The package now
 restores wasi-libc's whole C header tree, and this page picks the fix up by re-staging `assets/clang/`
 from it. `packages/v-wasm/src/shims.js` — shared by the worker and the Node driver, so there is one
-copy — is down from twenty-three entries to four:
+copy — holds what is left:
 
 - **Empty headers** for `netdb.h`, `sys/wait.h` and `termios.h`, which wasi-libc does not ship at all.
   Empty is deliberate: if one of them turns out to be needed, the compile says so rather than silently
   mis-declaring it.
 - **`<stdatomic.h>`**, because that one is Clang's own header rather than libc's, and the packaged
-  Clang resource directory is pruned to the seventeen headers `<stdarg.h>` and `<stddef.h>` need. V
-  does its atomics with clang's `__atomic_*` builtins, so only the names the preamble touches are
-  declared.
-- **A `getpid()` definition.** WASI has no process ids and wasi-libc only emulates `getpid()` behind a
-  define plus a library the runtime's link line does not carry. V's C calls it once, for a seed.
+  Clang resource directory is pruned. It declares the standard atomic type names and memory orders and
+  maps the C11 macros onto Clang's `__atomic_*` builtins. The types are what `sync`, `time` and
+  `benchmark` need — they hold `atomic_uintptr_t` fields.
+- **`getpid()` and `pipe()`.** WASI has no process ids and no pipes. `getpid()` is called once for a
+  seed; `pipe()` is in the `os` module's capture path, so any program that imports `os` at all needs the
+  symbol to link, even one that only reads `os.args`.
+- **`sem_*` stubs**, appended after the generated C. V implements `sync.Semaphore` over POSIX
+  semaphores, and `sync`, `time` and `benchmark` all reach it. They are a counter in the `sem_t` with a
+  wait that cannot block, which is correct because a WASI process here is one thread.
 - **Feature flags rather than files** for the four headers wasi-libc does ship but refuses to compile
   without an opt-in: `-D_WASI_EMULATED_MMAN`, `-D_WASI_EMULATED_SIGNAL`,
   `-D_WASI_EMULATED_PROCESS_CLOCKS`, and `-D__wasm_exception_handling__` for `<setjmp.h>`. Passing the
@@ -129,6 +133,13 @@ One more thing: V's generated C includes a few of its own files by **absolute pa
 toolchain's filesystem is a different one, so those files are copied across from the compiler's
 filesystem — which already has the whole tree — following nested includes. That is why a program using
 closures works without anything else being vendored.
+
+The standard library mostly works, and the two places it needed more than headers are worth naming:
+`json` is backed by V's bundled cJSON, which the compiler calls but does not embed, so the package
+compiles `thirdparty/cJSON/cJSON.c` as a second translation unit when a program uses it; and the
+atomics and semaphores above are what make `sync`, `time` and `benchmark` link and run. `net`,
+`net.http`, `sqlite` and file or process I/O remain out of reach — they need sockets or a real C
+library. The package README lists the modules the tests cover.
 
 And the compile itself is made with `-gc none`: the target otherwise asks for the Boehm GC, whose
 `<gc.h>` does not exist here, and short playground programs do not need a collector.
@@ -201,8 +212,10 @@ Both are off by default.
 - Six sample programs compile, build and run on the page, including `import math`, against the
   compressed, optimised assets.
 - V's diagnostics come through with source context and the ANSI colour stripped.
-- The same artifacts run from Node (compiler and toolchain), which is how the stages were developed,
-  and `packages/v-wasm` has a test suite that runs them there (`npm test`).
+- The same artifacts run from Node (compiler and toolchain), which is how the stages were developed.
+  `packages/v-wasm`'s test suite (`npm test`) covers the pipeline plus a representative slice of the
+  standard library — `json`, `time`, `sync`, `crypto.*`, `encoding.*`, `math.big`, `datatypes`, `flag`
+  and `benchmark`.
 
 ## Known limitations
 
@@ -214,7 +227,10 @@ Both are off by default.
   would shrink and speed it up further, but it is blocked by a self-hosting bootstrap failure in the
   pinned emsdk image; see `packages/v-wasm/docs/ASSETS.md`.
 - **C interop is disabled** in the compiler, a consequence of skipping the native-input scan: a program
-  using `#include` / `#flag` against C headers will not resolve them.
+  using `#include` / `#flag` against C headers will not resolve them. The standard library is the
+  exception — most of it works, including `json` (through V's bundled cJSON), `time`, `sync`, `crypto.*`,
+  `encoding.*`, `math.big`, `datatypes` and `benchmark`. `net` / `net.http`, `sqlite` and file or
+  process I/O do not: they need sockets or a real C library the browser does not have.
 - **Programs are compiled `-gc none`**, so a long-running program grows memory rather than collecting.
 - **stdin and argv work; file I/O does not.** The program runs with a WASI preview-1 environment and no
   preopened directories, so file I/O inside the program will fail, and `os.execute` cannot spawn a

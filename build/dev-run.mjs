@@ -13,7 +13,7 @@ import {
 } from '@live-codes/clang-wasm/toolchain';
 
 // The shim list lives in the package, shared with the page's worker rather than duplicated.
-import { COMPILE_ARGS, SHIMS, SOURCE_PATCHES } from '../packages/v-wasm/src/shims.js';
+import { COMPILE_ARGS, SHIMS, SOURCE_PATCHES, SOURCE_SUFFIX } from '../packages/v-wasm/src/shims.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const assets = join(here, '..', 'packages', 'v-wasm', 'assets', 'v');
@@ -91,7 +91,7 @@ console.log(`# shims mounted: ${Object.keys(SHIMS).length}`);
 console.log(`# absolute includes mounted from vlib.tar: ${mountAbsoluteIncludes(code, toolchain)}`);
 
 const compiled = await toolchain.captureCompilerOutput(() =>
-  runtime.compileArtifact(SOURCE_PATCHES + code, {
+  runtime.compileArtifact(SOURCE_PATCHES + code + SOURCE_SUFFIX, {
     // The runtime spells its modes 'C', 'CPP', 'objective-c'... - not 'c'.
     language: 'C',
     fileName: 'main.c',
